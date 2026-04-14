@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+}
+
+enum DomainStatus {
+  PENDING
+  ACTIVE
+  FAILED
+}
+
+enum RedirectType {
+  PERMANENT_301
+  TEMPORARY_302
+}
+
+enum LinkStatus {
+  ACTIVE
+  ARCHIVED
+  EXPIRED
+  DELETED
+}
+
+enum RuleType {
+  GEO
+  DEVICE
+  AB_TEST
+}
+
+enum DeviceType {
+  IOS
+  ANDROID
+  DESKTOP
+  TABLET
+  OTHER
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  REDIRECT
+  SETTINGS_UPDATE
+}
+
+model User {
+  id             String      @id @default(cuid())
+  email          String      @unique
+  fullName       String
+  avatarUrl      String?
+  passwordHash   String
+  role           UserRole    @default(MEMBER)
+  isActive       Boolean     @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  links          Link[]
+  clicks         Click[]
+  auditLogs      AuditLog[]
+  folders        Folder[]
+
+  @@index([role])
+  @@index([email])
+}
+
+model Domain {
+  id                  String        @id @default(cuid())
+  hostname            String        @unique
+  isPrimary           Boolean       @default(false)
+  dnsStatus           DomainStatus  @default(PENDING)
+  sslStatus           DomainStatus  @default(PENDING)
+  mainPageUrl         String?
+  mainPageRedirect    RedirectType  @default(TEMPORARY_302)
+  notFoundUrl         String?
+  notFoundRedirect    RedirectType  @default(TEMPORARY_302)
+  verifiedAt          DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  links               Link[]
+
+  @@index([dnsStatus, sslStatus])
+}
+
+model Folder {
+  id           String      @id @default(cuid())
+  name         String
+  color        String?
+  ownerId      String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  owner        User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  links        Link[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+}
+
+model Link {
+  id                    String         @id @default(cuid())
+  domainId              String
+  ownerId               String
+  folderId              String?
+
+  slug                  String
+  shortUrl              String
+  originalUrl           String
+  cloakedUrl            String?
+  metaTitle             String?
+  description           String?
+
+  status                LinkStatus     @default(ACTIVE)
+  passwordHash          String?
+  isCloakingEnabled     Boolean        @default(false)
+
+  expiresAt             DateTime?
+  clickLimit            Int?
+
+  utmSource             String?
+  utmMedium             String?
+  utmCampaign           String?
+
+  totalClicks           BigInt         @default(0)
+  uniqueClicks          BigInt         @default(0)
+
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  deletedAt             DateTime?
+
+  domain                Domain         @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  owner                 User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folder                Folder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
+  tags                  LinkTag[]
+  clicks                Click[]
+  rules                 LinkRule[]
+  abVariants            AbVariant[]
+
+  @@unique([domainId, slug])
+  @@index([ownerId, createdAt])
+  @@index([status, expiresAt])
+  @@index([utmSource, utmMedium, utmCampaign])
+}
+
+model Tag {
+  id           String      @id @default(cuid())
+  name         String
+  color        String?
+  createdAt    DateTime    @default(now())
+
+  links        LinkTag[]
+
+  @@unique([name])
+}
+
+model LinkTag {
+  linkId       String
+  tagId        String
+
+  link         Link        @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  tag          Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([linkId, tagId])
+  @@index([tagId])
+}
+
+model LinkRule {
+  id              String      @id @default(cuid())
+  linkId          String
+  type            RuleType
+  priority        Int         @default(100)
+  countryCode     String?
+  cityName        String?
+  deviceType      DeviceType?
+  targetUrl       String
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  link            Link        @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, type, priority])
+  @@index([countryCode, cityName])
+}
+
+model AbVariant {
+  id              String      @id @default(cuid())
+  linkId          String
+  name            String
+  targetUrl       String
+  trafficWeight   Int         @default(50)
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  link            Link        @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, isActive])
+}
+
+model Click {
+  id                    String      @id @default(cuid())
+  linkId                String
+  visitorUserId         String?
+
+  clickedAt             DateTime    @default(now())
+  visitorIp             String
+  ipHash                String
+  userAgent             String?
+  browser               String?
+  os                    String?
+  device                DeviceType  @default(OTHER)
+
+  countryCode           String?
+  country               String?
+  region                String?
+  city                  String?
+  latitude              Float?
+  longitude             Float?
+
+  referrer              String?
+  refererHost           String?
+
+  utmSource             String?
+  utmMedium             String?
+  utmCampaign           String?
+
+  isUnique              Boolean     @default(false)
+  isBot                 Boolean     @default(false)
+  excludedByIpRule      Boolean     @default(false)
+  responseTimeMs        Int?
+  dwellTimeSeconds      Int?
+
+  link                  Link        @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  visitorUser           User?       @relation(fields: [visitorUserId], references: [id], onDelete: SetNull)
+
+  @@index([linkId, clickedAt])
+  @@index([clickedAt])
+  @@index([countryCode, city])
+  @@index([browser, os])
+  @@index([referrer])
+  @@index([utmSource, utmMedium, utmCampaign])
+  @@index([ipHash, linkId])
+}
+
+model OrganizationSetting {
+  id                    String      @id @default(cuid())
+  organizationName      String      @default("Thinksmart Insurance")
+  ga4MeasurementId      String?
+  metaPixelId           String?
+  webhookUrl            String?
+  destinationAllowlist  String[]
+  updatedByUserId       String?
+  updatedAt             DateTime    @updatedAt
+  createdAt             DateTime    @default(now())
+
+  ipExclusions          IpExclusion[]
+
+  @@index([updatedAt])
+}
+
+model IpExclusion {
+  id                    String                @id @default(cuid())
+  settingId             String
+  ipAddress             String
+  note                  String?
+  createdAt             DateTime              @default(now())
+
+  setting               OrganizationSetting   @relation(fields: [settingId], references: [id], onDelete: Cascade)
+
+  @@unique([settingId, ipAddress])
+  @@index([ipAddress])
+}
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  actorId         String?
+  action          AuditAction
+  entityType      String
+  entityId        String?
+  message         String
+  metadata        Json?
+  createdAt       DateTime    @default(now())
+
+  actor           User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, entityType, createdAt])
+}
